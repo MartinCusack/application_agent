@@ -1,0 +1,27 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Personal data files
+data/cv.md
+data/skills.xlsx
+
+# OS
+.DS_Store
+
+# Archives
+*.zip
+
+# VSCode
+.vscode/

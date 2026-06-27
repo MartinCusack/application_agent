@@ -6,7 +6,8 @@ produced by ``AnalystAgent`` is intentionally threaded all the way through to
 """
 
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -239,3 +240,92 @@ class PipelineState(BaseModel):
     rescore_result: Optional[RescorerResult] = None
 
     vault_path: Optional[str] = None
+
+
+# ── JD File Metadata ──────────────────────────────────────────────────────────
+
+class JDFileMetadata(BaseModel):
+    """Metadata extracted from a JD file in the batch queue.
+
+    Attributes:
+        path: Absolute path to the source ``.md`` file.
+        company: Target company name (from frontmatter or filename).
+        role: Job title (from frontmatter or filename).
+        jd_text: Raw job description text with frontmatter stripped.
+        threshold: Per-job score threshold override, or ``None`` to use
+            the global ``MATCH_SCORE_THRESHOLD``.
+        force: If ``True``, bypass Gate 1 for this job regardless of the
+            global ``--force`` flag.
+    """
+
+    path: Path
+    company: str
+    role: str
+    jd_text: str
+    threshold: Optional[int] = None
+    force: bool = False
+
+
+# ── Batch Run Models ──────────────────────────────────────────────────────────
+
+class BatchJobResult(BaseModel):
+    """Outcome of a single job in a batch run.
+
+    Attributes:
+        company: Target company name.
+        role: Job title.
+        jd_file: Filename of the source JD file.
+        status: One of ``"applied"``, ``"gated_out"``, ``"skipped"``,
+            or ``"error"``.
+        initial_score: Aggregate score from Agent 1a, or ``None`` if the
+            pipeline errored before Agent 1a completed.
+        final_score: Rescored aggregate from Agent 3b, or ``None`` if
+            the pipeline exited before Agent 3b completed.
+        vault_path: Absolute path to the vault output folder, or ``None``
+            on error.
+        error_message: Exception message if ``status == "error"``.
+    """
+
+    company: str
+    role: str
+    jd_file: str
+    status: Literal["applied", "gated_out", "skipped", "error"]
+    initial_score: Optional[int] = None
+    final_score: Optional[int] = None
+    vault_path: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class BatchRunResult(BaseModel):
+    """Aggregate result of a completed (or interrupted) batch run.
+
+    Attributes:
+        run_id: Short random ID for correlating vault files.
+        started_at: Batch start time.
+        completed_at: Batch end time (set even on interrupt).
+        total: Total number of JD files discovered.
+        applied: Jobs that passed both gates.
+        gated_out: Jobs that passed Gate 1 but failed Gate 2.
+        skipped: Jobs that failed Gate 1 (analyst said don't apply).
+        errors: Jobs where the pipeline raised an exception.
+        results: Per-job outcome list.
+    """
+
+    run_id: str
+    started_at: datetime
+    completed_at: datetime
+    total: int
+    applied: int
+    gated_out: int
+    skipped: int
+    errors: int
+    results: list[BatchJobResult]
+
+
+class CompanyResearchResults(BaseModel):
+
+    """
+    
+    """
+
+    company :str

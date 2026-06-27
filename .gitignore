@@ -16,6 +16,13 @@ htmlcov/
 # Personal data files
 data/cv.md
 data/skills.xlsx
+data/Dads_CV_data/
+
+# Job application outputs (personal)
+job_descriptions/applied/
+job_descriptions/failed/
+job_descriptions/gated_out/
+job_descriptions/skipped/
 
 # OS
 .DS_Store

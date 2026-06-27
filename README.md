@@ -49,6 +49,15 @@ uv run job-agent list-applications
 
 # Filter by outcome
 uv run job-agent list-applications --status Interview
+
+# Process all JD files in the TODO queue
+uv run job-agent batch-apply
+
+# Dry run — list what would be processed without running anything
+uv run job-agent batch-apply --dry-run
+
+# Batch with a threshold override
+uv run job-agent batch-apply --threshold 60
 ```
 
 ---
@@ -62,9 +71,11 @@ job_agent/
 ├── job_agent/
 │   ├── __init__.py              ← empty (package marker only)
 │   ├── agents.py                ← all agent classes (AnalystAgent, WriterAgent …)
-│   ├── cli.py                   ← Typer CLI entry point (apply, list-applications, check-config)
-│   ├── config.py                ← env-var config (API key, paths, threshold)
+│   ├── batch.py                 ← batch orchestrator (processes all JDs in TODO queue)
+│   ├── cli.py                   ← Typer CLI entry point (apply, batch-apply, list-applications, check-config)
+│   ├── config.py                ← env-var config (API key, paths, threshold, batch settings)
 │   ├── cv_utils.py              ← pure string helpers (extract_summary, substitute_summary)
+│   ├── jd_parser.py             ← JD file parser (frontmatter + filename convention)
 │   ├── loaders.py               ← file I/O (load_cv, load_skills_table → markdown)
 │   ├── models.py                ← Pydantic schemas for every agent input/output
 │   ├── pipeline.py              ← orchestrator (threads PipelineState through all agents)
@@ -74,10 +85,18 @@ job_agent/
 ├── tests/
 │   ├── conftest.py              ← shared fixtures (sample CV, model instances)
 │   ├── test_agents.py           ← LLM mocked; tests JSON parsing + schema validation
+│   ├── test_batch.py            ← batch orchestrator + JD parser tests (no API calls)
 │   ├── test_cv_utils.py         ← pure unit tests; no mocking needed
 │   ├── test_loaders.py          ← filesystem tests via tmp_path
 │   ├── test_pipeline.py         ← all agents mocked; tests control flow + early exits
 │   └── test_vault.py            ← formatter purity + file I/O via tmp_path
+│
+├── job_descriptions/
+│   ├── TODO/                    ← drop .md files here for batch-apply to process
+│   ├── applied/                 ← moved here after passing both gates
+│   ├── gated_out/               ← moved here after failing Gate 2 (low rescore)
+│   ├── skipped/                 ← moved here after failing Gate 1 (analyst said no)
+│   └── failed/                  ← moved here on pipeline error (.error.txt sidecar written)
 │
 ├── data/
 │   ├── cv.md                    ← YOUR master CV (add this)
@@ -94,6 +113,60 @@ job_agent/
 **Separation of concerns** — prompts are isolated in `prompts.py` so you can tune agent behaviour without touching logic. Pure string operations live in `cv_utils.py` where they can be unit-tested cheaply with no mocking. Vault I/O is confined to `vault.py` so the pipeline stays filesystem-agnostic.
 
 **Structured outputs** — every agent returns a validated Pydantic model, never a free-form string. The `ScoringRubric` produced by Agent 1a is passed verbatim to Agent 3b to prevent criterion drift between the original analysis and the rescore. The `PipelineState` object accumulates all outputs and is returned to the caller for inspection after any run, including early exits. If Claude returns malformed JSON or a schema mismatch, `BaseAgent._call` retries up to 3 times with exponential backoff, appending the bad response and a correction prompt to the conversation each time.
+
+---
+
+## Batch Apply
+
+Process multiple job descriptions in one run. Drop `.md` files into `job_descriptions/TODO/` and run:
+
+```bash
+uv run job-agent batch-apply
+```
+
+Files are processed sequentially and moved to outcome subdirectories automatically.
+
+### JD file format
+
+Files can be plain markdown (company and role are inferred from the filename) or include a YAML frontmatter block to override defaults:
+
+```markdown
+---
+company: Deel
+role: Data Scientist
+threshold: 60      # optional — overrides MATCH_SCORE_THRESHOLD for this job
+force: false       # optional — bypass Gate 1 for this job only
+---
+
+[Paste the full job description here]
+```
+
+Filename convention (no frontmatter): `Company_Role_Words.md` — the first underscore-separated token becomes the company; remaining tokens join as the role.
+
+```
+Deel_Data_Scientist.md  →  company=Deel, role=Data Scientist
+```
+
+### Batch outcome directories
+
+| Directory | When moved there |
+|-----------|-----------------|
+| `applied/` | Both gates passed |
+| `gated_out/` | Passed Gate 1, failed Gate 2 (rescored below threshold) |
+| `skipped/` | Failed Gate 1 (analyst recommended not applying) |
+| `failed/` | Pipeline raised an exception; a `.error.txt` sidecar is written |
+
+A `batch_run_{id}.md` summary and `batch_run_{id}.json` are written to the vault root after each batch.
+
+### Batch CLI options
+
+```bash
+uv run job-agent batch-apply --dir path/to/other/dir   # custom queue dir
+uv run job-agent batch-apply --threshold 55            # global threshold override
+uv run job-agent batch-apply --force                   # skip Gate 1 for all jobs
+uv run job-agent batch-apply --delay 5.0               # seconds between jobs
+uv run job-agent batch-apply --dry-run                 # list files, do nothing
+```
 
 ---
 
@@ -238,6 +311,7 @@ uv run pytest tests/test_pipeline.py -v
 | `test_vault.py` | Markdown formatters + file write operations |
 | `test_agents.py` | LLM mocked — JSON parsing, markdown fence stripping, schema validation, exponential backoff retry |
 | `test_pipeline.py` | Control flow — Gate 1/2 early exits, variant selection, threshold override |
+| `test_batch.py` | JD file parsing (frontmatter + filename), queue discovery, dry run, error isolation, file movement, result counts |
 
 ---
 
@@ -250,9 +324,41 @@ All config lives in `.env`. Copy `.env.example` to get started.
 | `ANTHROPIC_API_KEY` | — | Required. Your Anthropic API key. |
 | `CV_PATH` | `data/cv.md` | Path to your master CV file. |
 | `SKILLS_TABLE_PATH` | `data/skills.xlsx` | Path to your skills Excel table. |
-| `OBSIDIAN_VAULT_PATH` | `~/obsidian/Applications` | Root folder for vault output. |
+| `OBSIDIAN_VAULT_PATH` | `~/obsidian/Applications` | Root folder where the pipeline writes new application folders. |
+| `OBSIDIAN_LIST_PATH` | _(same as `OBSIDIAN_VAULT_PATH`)_ | Root folder scanned by `list-applications`. Set to a parent directory if your vault organises applications across subdirectories. |
 | `MATCH_SCORE_THRESHOLD` | `65` | Minimum score to proceed past analysis. |
-| `CLAUDE_MODEL` | `claude-sonnet-4-6` | Model for all agents. Use `claude-opus-4-6` for higher quality. |
+| `MODEL_NAME` | `claude-sonnet-4-6` | Model for all agents. Use `claude-opus-4-6` for higher quality. |
+| `BATCH_TODO_DIR` | `job_descriptions/TODO` | Directory scanned by `batch-apply` for pending JD files. |
+| `BATCH_DELAY_SECONDS` | `2.0` | Pause between pipeline runs in batch mode to avoid API rate limits. |
+
+### Example `.env`
+
+```dotenv
+# Model
+MODEL_PROVIDER=anthropic
+MODEL_NAME=claude-sonnet-4-6
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Paths
+CV_PATH=data/cv.md
+SKILLS_TABLE_PATH=data/skills.xlsx
+COVER_LETTER_TEMPLATE_PATH=data/cover_letter.md
+COVER_LETTER_RUBRIC_PATH=data/cover_letter_rubric.md
+
+# Obsidian vault
+# OBSIDIAN_VAULT_PATH: where new application folders are created
+OBSIDIAN_VAULT_PATH=~/Documents/vault/Job_hunt/job_applications/companies/
+# OBSIDIAN_LIST_PATH: where list-applications scans for status.md files
+# Set to a parent dir if your vault organises applications across subdirectories
+OBSIDIAN_LIST_PATH=~/Documents/vault/Job_hunt/job_applications/application_status/
+
+# Scoring
+MATCH_SCORE_THRESHOLD=60
+
+# Batch
+BATCH_TODO_DIR=job_descriptions/TODO
+BATCH_DELAY_SECONDS=2.0
+```
 
 ---
 
@@ -276,7 +382,9 @@ All config lives in `.env`. Copy `.env.example` to get started.
 
 ### Low priority
 
-**LinkedIn / job board integration** — pull job descriptions directly from LinkedIn, Indeed, or Greenhouse. Feed them into a batch mode that queues multiple roles and runs the pipeline overnight.
+**Batch apply** ✅ — `uv run job-agent batch-apply` processes all `.md` files in `job_descriptions/TODO/`, runs the full pipeline for each, and moves files to `applied/`, `gated_out/`, `skipped/`, or `failed/` depending on outcome. Supports YAML frontmatter for per-job threshold/force overrides. Writes a `batch_run_{id}.md` and `.json` summary to the vault.
+
+**LinkedIn / job board integration** — pull job descriptions directly from LinkedIn, Indeed, or Greenhouse.
 
 **Salary benchmarking agent** — Agent 0 that searches Glassdoor/Levels.fyi for salary data before the main pipeline runs. Writes a benchmark note so you can negotiate from a position of knowledge.
 

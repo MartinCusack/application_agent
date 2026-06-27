@@ -79,9 +79,9 @@ def list_applications(
     from job_agent.config import config
     from job_agent.vault import parse_status_file
 
-    vault_base = config.OBSIDIAN_VAULT_PATH.expanduser()
+    vault_base = config.OBSIDIAN_LIST_PATH.expanduser()
     if not vault_base.exists():
-        console.print(f"[red]Vault path not found: {vault_base}[/red]")
+        console.print(f"[red]Vault list path not found: {vault_base}[/red]")
         raise typer.Exit(1)
 
     status_files = sorted(vault_base.rglob("status.md"), reverse=True)
@@ -143,6 +143,34 @@ def list_applications(
 
 
 @app.command()
+def batch_apply(
+    directory: Optional[Path] = typer.Option(None, "--dir", "-d", help="Directory of JD files (default: BATCH_TODO_DIR from config)"),
+    threshold: Optional[int] = typer.Option(None, "--threshold", "-t", help="Override score threshold for all jobs"),
+    force: bool = typer.Option(False, "--force", "-F", help="Skip Gate 1 for all jobs"),
+    delay: Optional[float] = typer.Option(None, "--delay", help="Seconds to wait between jobs (default: BATCH_DELAY_SECONDS from config)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List files that would be processed without running the pipeline"),
+) -> None:
+    """Run the pipeline for all .md files in the TODO directory.
+
+    Files are processed sequentially.  Each file is moved to an outcome
+    subdirectory after processing: ``applied/``, ``gated_out/``, ``skipped/``,
+    or ``failed/``.  A summary report is written to the Obsidian vault.
+    """
+    from job_agent.batch import run_batch
+    from job_agent.config import config
+
+    todo_dir = directory or config.BATCH_TODO_DIR
+    effective_delay = delay if delay is not None else config.BATCH_DELAY_SECONDS
+    run_batch(
+        todo_dir=todo_dir,
+        threshold=threshold,
+        force=force,
+        delay_seconds=effective_delay,
+        dry_run=dry_run,
+    )
+
+
+@app.command()
 def check_config() -> None:
     """Verify that all required config paths and the API key are set.
 
@@ -164,7 +192,13 @@ def check_config() -> None:
     console.print(f"  Provider:        {config.MODEL_PROVIDER}")
     console.print(f"  Model:           {config.MODEL_NAME}")
     api_key = config.ANTHROPIC_API_KEY if config.MODEL_PROVIDER == "anthropic" else config.OPENAI_API_KEY
-    console.print(f"  API key set:     {'✅' if api_key else '❌'}\n")
+    console.print(f"  API key set:     {'✅' if api_key else '❌'}")
+    batch_todo_exists = config.BATCH_TODO_DIR.exists()
+    console.print(
+        f"  Batch TODO dir:  {config.BATCH_TODO_DIR} "
+        f"{'✅' if batch_todo_exists else '⚠️  not found (create to use batch-apply)'}"
+    )
+    console.print(f"  Batch delay:     {config.BATCH_DELAY_SECONDS}s\n")
 
 
 if __name__ == "__main__":

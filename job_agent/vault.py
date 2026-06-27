@@ -17,6 +17,7 @@ from datetime import datetime
 
 from job_agent.models import (
     AnalysisResult,
+    BatchRunResult,
     CoverLetterResult,
     DiffResult,
     PipelineState,
@@ -232,6 +233,50 @@ def parse_status_file(path: Path) -> dict:
         "variant": extract("Variant"),
         "status": extract("Status"),
     }
+
+
+def format_batch_summary(result: BatchRunResult) -> str:
+    """Render a ``BatchRunResult`` as a markdown summary table.
+
+    Args:
+        result: Completed (or interrupted) batch run result.
+
+    Returns:
+        Markdown string ready to write to ``batch_run_{run_id}.md``.
+    """
+    duration = int((result.completed_at - result.started_at).total_seconds())
+    lines = [
+        f"# Batch Run {result.run_id}",
+        "",
+        f"- **Date:** {result.started_at.strftime('%Y-%m-%d %H:%M')}",
+        f"- **Duration:** {duration}s",
+        f"- **Total:** {result.total}",
+        f"- **Applied:** {result.applied}",
+        f"- **Gated Out:** {result.gated_out}",
+        f"- **Skipped:** {result.skipped}",
+        f"- **Errors:** {result.errors}",
+        "",
+        "## Results",
+        "",
+        "| Company | Role | Initial | Final | Δ | Outcome |",
+        "|---------|------|---------|-------|---|---------|",
+    ]
+    for r in result.results:
+        initial = str(r.initial_score) if r.initial_score is not None else "—"
+        final = str(r.final_score) if r.final_score is not None else "—"
+        if r.initial_score is not None and r.final_score is not None:
+            delta = f"{r.final_score - r.initial_score:+d}"
+        else:
+            delta = "—"
+        lines.append(f"| {r.company} | {r.role} | {initial} | {final} | {delta} | {r.status} |")
+
+    errors = [r for r in result.results if r.error_message]
+    if errors:
+        lines += ["", "## Errors", ""]
+        for r in errors:
+            lines.append(f"- **{r.company} / {r.role}:** {r.error_message}")
+
+    return "\n".join(lines)
 
 
 def format_status(state: PipelineState) -> str:

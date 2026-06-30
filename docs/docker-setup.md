@@ -72,15 +72,15 @@ to build the app
 
 Then to check all of configs are correct.
 
-`docker compose run job-agent check-config`
+`docker compose run --rm job-agent check-config`
 
 If you want to run a specific job application which you pass the path to
 
-`docker compose run job-agent apply --company "Acme" --role "Data Scientist" --jd-file "job_descriptions/TODO/acme_data_scientist.md"`
+`docker compose run --rm job-agent apply --company "Acme" --role "Data Scientist" --jd-file "job_descriptions/TODO/acme_data_scientist.md"`
 
 If you want to run a batch job so any job descriptions in `./job_descriptions/TODO` shall be processed
 
-`docker compose run job-agent batch-apply`
+`docker compose run --rm job-agent batch-apply`
 
 
 # where to find output

@@ -1,0 +1,26 @@
+services:
+  job-agent:
+    build: .
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./job_descriptions:/app/job_descriptions
+
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      MODEL_PROVIDER: ${MODEL_PROVIDER}
+      MODEL_NAME: ${MODEL_NAME}
+      BATCH_TODO_DIR: /app/job_descriptions/TODO
+      OBSIDIAN_VAULT_PATH: /app/output
+      COVER_LETTER_TEMPLATE_PATH: /app/data/cover_letter.md
+      MATCH_SCORE_THRESHOLD: ${MATCH_SCORE_THRESHOLD}
+      COVER_LETTER_RUBRIC_PATH: /app/data/cover_letter_rubric.md
+      BATCH_DELAY_SECONDS: ${BATCH_DELAY_SECONDS}
+
+
+
+
+
+
